@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OCR PDF Upload</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>Upload PDFs for OCR</h1>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="files" multiple required>
+        <br><br>
+        <label>Language:</label>
+        <input type="text" name="lang" value="eng">
+        <br><br>
+        <button type="submit">Upload & Process</button>
+    </form>
+</body>
+</html>
