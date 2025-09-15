@@ -37,26 +37,58 @@ def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 # Upload and process PDFs
+# Upload and process PDFs (multithreaded per file)
 @app.post("/upload", response_class=HTMLResponse)
-async def upload_pdfs(request: Request, files: list[UploadFile] = File(...), lang: str = Form("eng")):
+async def upload_pdfs(
+    request: Request, 
+    files: list[UploadFile] = File(...), 
+    lang: str = Form("eng")
+):
     processed_files = []
 
+    # Step 1: Save all uploaded PDFs first
+    tasks = []
     for file in files:
         file_id = str(uuid.uuid4())
         upload_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
         output_path = os.path.join(OUTPUT_DIR, f"ocr_{file.filename}")
-        
-        # Save uploaded PDF
+
         with open(upload_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # Run OCR
-        await run_ocr(upload_path, output_path, lang)
+        # Store task for OCR
+        tasks.append((upload_path, output_path, lang))
 
-        # Store only basename for download
+    # Step 2: Run OCR on all files concurrently
+    loop = asyncio.get_event_loop()
+    await asyncio.gather(
+        *[
+            loop.run_in_executor(
+                None,  # use default ThreadPoolExecutor
+                lambda p=inp, o=out, l=lg: ocrmypdf.ocr(
+                    p, o,
+                    language=l,
+                    deskew=True,            # straighten crooked scans
+                    clean=True,             # clean up noisy backgrounds
+                    clean_final=True,       # extra cleaning pass
+                    rotate_pages=True,      # auto-rotate pages
+                    optimize=0,             # no image compression, preserves quality
+                    remove_background=False,# keep original background detail
+                    force_ocr=True,         # force raster-to-text
+                    output_type="pdfa-2",   # archival, higher compatibility
+                    fast_web_view=0         # skip linearization step (saves time)
+                )
+            )
+            for inp, out, lg in tasks
+        ]
+    )
+
+    # Step 3: Collect results
+    for _, output_path, _ in tasks:
         processed_files.append({"filename": os.path.basename(output_path)})
 
     return templates.TemplateResponse("results.html", {"request": request, "files": processed_files})
+
 
 # Download a single PDF
 @app.get("/download/{filename}")
