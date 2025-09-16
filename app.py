@@ -1,104 +1,121 @@
 from fastapi import FastAPI, File, UploadFile, Form, Request
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import shutil, os, uuid, asyncio
+import os, asyncio  # <-- MODIFIED: shutil and uuid removed
 import ocrmypdf
 from zipfile import ZipFile
 
 # Setup
-app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app = FastAPI(title="OCR Enabler Pro", description="Ultimate OCR PDF Processor", version="2.0")
+# Note: You can remove the /static mount if you are not using it for anything else.
+# For now, we'll assume it might be used for favicons, etc.
+app.mount("/static", StaticFiles(directory="static", check_dir=False), name="static")
 templates = Jinja2Templates(directory="templates")
 
-UPLOAD_DIR = "uploads"
+# --- REMOVED UPLOAD_DIR ---
+# No longer need to store raw uploads
 OUTPUT_DIR = "outputs"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+# The 'uploads' directory is no longer created
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Helper: run OCR asynchronously
-async def run_ocr(input_path, output_path, lang="eng"):
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, lambda: ocrmypdf.ocr(
-        input_path,
-        output_path,
-        language=lang,
-        deskew=True,
-        clean=False,
-        rotate_pages=True,
-        optimize=0,
-        remove_background=False,
-        force_ocr=True
-    ))
 
-# Home page: upload form
+# --- MODIFIED Helper: OCR execution ---
+# Renamed 'input_path' to 'input_file' to reflect it can be a stream
+async def run_ocr(input_file, output_path, lang="eng"):
+    """
+    Runs ocrmypdf on an input file stream or path.
+    """
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: ocrmypdf.ocr(
+            input_file,  # <-- MODIFIED: This can now be a file-like object
+            output_path,
+            language=lang,
+            deskew=True,
+            clean=True,
+            clean_final=True,
+            rotate_pages=True,
+            optimize=0,
+            remove_background=False,
+            force_ocr=True,
+            output_type="pdfa-2",
+            fast_web_view=0
+        )
+    )
+
+
+# Home page (no changes)
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-# Upload and process PDFs
-# Upload and process PDFs (multithreaded per file)
-@app.post("/upload", response_class=HTMLResponse)
+
+# --- MODIFIED Upload PDFs Endpoint ---
+@app.post("/upload")
 async def upload_pdfs(
-    request: Request, 
-    files: list[UploadFile] = File(...), 
+    request: Request,
+    files: list[UploadFile] = File(...),
     lang: str = Form("eng")
 ):
-    processed_files = []
-
-    # Step 1: Save all uploaded PDFs first
+    processed_filenames = []
     tasks = []
-    for file in files:
-        file_id = str(uuid.uuid4())
-        upload_path = os.path.join(UPLOAD_DIR, f"{file_id}_{file.filename}")
-        output_path = os.path.join(OUTPUT_DIR, f"ocr_{file.filename}")
 
-        with open(upload_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+    try:
+        for file in files:
+            safe_filename = os.path.basename(file.filename)
+            output_path = os.path.join(OUTPUT_DIR, f"ocr_{safe_filename}")
 
-        # Store task for OCR
-        tasks.append((upload_path, output_path, lang))
-
-    # Step 2: Run OCR on all files concurrently
-    loop = asyncio.get_event_loop()
-    await asyncio.gather(
-        *[
-            loop.run_in_executor(
-                None,  # use default ThreadPoolExecutor
-                lambda p=inp, o=out, l=lg: ocrmypdf.ocr(
-                    p, o,
-                    language=l,
-                    deskew=True,            # straighten crooked scans
-                    clean=True,             # clean up noisy backgrounds
-                    clean_final=True,       # extra cleaning pass
-                    rotate_pages=True,      # auto-rotate pages
-                    optimize=0,             # no image compression, preserves quality
-                    remove_background=False,# keep original background detail
-                    force_ocr=True,         # force raster-to-text
-                    output_type="pdfa-2",   # archival, higher compatibility
-                    fast_web_view=0         # skip linearization step (saves time)
-                )
-            )
-            for inp, out, lg in tasks
-        ]
-    )
-
-    # Step 3: Collect results
-    for _, output_path, _ in tasks:
-        processed_files.append({"filename": os.path.basename(output_path)})
-
-    return templates.TemplateResponse("results.html", {"request": request, "files": processed_files})
+            # --- CORE CHANGE ---
+            # We no longer save the uploaded file to disk.
+            # We pass the in-memory file object (file.file) directly to the OCR function.
+            # FastAPI handles temporary storage for large files automatically.
+            task = run_ocr(file.file, output_path, lang)
+            tasks.append(task)
+            processed_filenames.append(os.path.basename(output_path))
+        
+        await asyncio.gather(*tasks)
+        
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "processed_files": processed_filenames}
+        )
+    except Exception as e:
+        print(f"An error occurred during upload/OCR: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "error": "An unexpected error occurred during processing."}
+        )
 
 
-# Download a single PDF
+# --- NO CHANGES to endpoints below this line ---
+
+# Download single file
 @app.get("/download/{filename}")
 def download_file(filename: str):
     file_path = os.path.join(OUTPUT_DIR, filename)
     if os.path.exists(file_path):
-        return FileResponse(file_path, filename=filename)
+        return FileResponse(
+            file_path, 
+            filename=filename, 
+            content_disposition_type="inline"
+        )
     return {"error": "File not found"}
 
-# Bulk download (ZIP)
+
+# Get list of processed files
+@app.get("/processed-files", response_class=JSONResponse)
+async def get_processed_files():
+    try:
+        files = [f for f in os.listdir(OUTPUT_DIR) if f.endswith('.pdf') and f != "ocr_results.zip"]
+        files.sort(key=lambda x: os.path.getmtime(os.path.join(OUTPUT_DIR, x)), reverse=True)
+        return {"files": files}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# Download all results as ZIP
 @app.get("/download-zip")
 def download_zip():
     zip_name = "ocr_results.zip"

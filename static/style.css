@@ -1,26 +1,70 @@
 body {
-    font-family: Arial, sans-serif;
-    background-color: #f5f5f5;
+    font-family: 'Segoe UI', sans-serif;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
     text-align: center;
-    padding: 50px;
+    padding: 40px;
 }
 
 .container {
-    background: white;
+    background: #1f1f2e;
     padding: 30px;
     margin: auto;
-    border-radius: 10px;
-    width: 60%;
-    box-shadow: 0 0 10px rgba(0,0,0,0.2);
+    border-radius: 15px;
+    width: 70%;
+    max-width: 700px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
 }
 
-button {
-    padding: 10px 20px;
-    margin: 10px;
+h1 {
+    font-size: 2em;
+    margin-bottom: 20px;
+}
+
+.upload-box {
+    border: 2px dashed #aaa;
+    padding: 30px;
+    margin: 20px 0;
     cursor: pointer;
+    background: #2b2b3d;
+    border-radius: 10px;
+    transition: 0.3s;
+}
+.upload-box:hover {
+    border-color: #fff;
+    background: #33334d;
+}
+
+button, .btn, .btn-secondary {
+    padding: 12px 20px;
+    margin: 10px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: 0.3s;
+}
+
+button, .btn {
+    background: #4cafef;
+    color: white;
+}
+button:hover, .btn:hover {
+    background: #3a9ed9;
+}
+
+.btn-secondary {
+    background: #888;
+    color: white;
+}
+.btn-secondary:hover {
+    background: #666;
 }
 
 ul {
     list-style: none;
     padding: 0;
+}
+li {
+    margin: 10px 0;
 }
